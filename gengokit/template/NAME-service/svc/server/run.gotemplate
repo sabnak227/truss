@@ -21,18 +21,23 @@ import (
 	pb "{{.PBImportPath -}}"
 	"{{.ImportPath -}} /svc"
 	"{{.ImportPath -}} /handlers"
+	stdprometheus "github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var DefaultConfig Config
 
 func init() {
-	flag.StringVar(&DefaultConfig.DebugAddr, "debug.addr", ":5060", "Debug and metrics listen address")
+	flag.StringVar(&DefaultConfig.MetricAddr, "metric.addr", ":5070", "Metrics listen address")
+	flag.StringVar(&DefaultConfig.DebugAddr, "debug.addr", ":5060", "Debug listen address")
 	flag.StringVar(&DefaultConfig.HTTPAddr, "http.addr", ":5050", "HTTP listen address")
 	flag.StringVar(&DefaultConfig.GRPCAddr, "grpc.addr", ":5040", "gRPC (HTTP) listen address")
 
 	// Use environment variables, if set. Flags have priority over Env vars.
 	if addr := os.Getenv("DEBUG_ADDR"); addr != "" {
 		DefaultConfig.DebugAddr = addr
+	}
+	if addr := os.Getenv("METRIC_ADDR"); addr != "" {
+		DefaultConfig.MetricAddr = addr
 	}
 	if port := os.Getenv("PORT"); port != "" {
 		DefaultConfig.HTTPAddr = fmt.Sprintf(":%s", port)
@@ -49,6 +54,7 @@ func init() {
 type Config struct {
 	HTTPAddr string
 	DebugAddr string
+	MetricAddr string
 	GRPCAddr string
 }
 
@@ -74,6 +80,8 @@ func NewEndpoints() svc.Endpoints {
 	{{end}}
 	}
 
+	// Wrap default middlewares
+	endpoints = svc.WrapEndpoints(endpoints)
 	// Wrap selected Endpoints with middlewares. See handlers/middlewares.go
 	endpoints = handlers.WrapEndpoints(endpoints)
 
@@ -103,6 +111,17 @@ func Run(cfg Config) {
 		m.Handle("/debug/pprof/trace", http.HandlerFunc(pprof.Trace))
 
 		errc <- http.ListenAndServe(cfg.DebugAddr, m)
+	}()
+
+	// Metric listener.
+	go func() {
+		log.Println("transport", "metric", "addr", cfg.MetricAddr)
+
+		m := http.NewServeMux()
+		
+		m.Handle("/metrics", stdprometheus.Handler())
+
+		errc <- http.ListenAndServe(cfg.MetricAddr, m)
 	}()
 
 	// HTTP transport.

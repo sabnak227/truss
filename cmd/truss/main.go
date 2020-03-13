@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
-	log "github.com/sirupsen/logrus"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	flag "github.com/spf13/pflag"
 
 	"github.com/metaverse/truss/truss"
