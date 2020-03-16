@@ -19,7 +19,6 @@ import (
     "github.com/go-kit/kit/metrics"
     "github.com/go-kit/kit/metrics/prometheus"
     stdzipkin "github.com/openzipkin/zipkin-go"
-    "github.com/openzipkin/zipkin-go/reporter"
     zipkinhttp "github.com/openzipkin/zipkin-go/reporter/http"
     stdprometheus "github.com/prometheus/client_golang/prometheus"
     "github.com/prometheus/client_golang/prometheus/promhttp"
@@ -30,20 +29,19 @@ import (
 	"{{.ImportPath -}} /handlers"
 )
 
-var DefaultConfig Config
-
-var logger log.Logger
-var dur metrics.Histogram
-var zipkinTracer *stdzipkin.Tracer
-var zipkinReporter reporter.Reporter
-var zipkinURL = "http://localhost:9411/api/v2/spans"
-
+var (
+	DefaultConfig Config
+	logger        log.Logger
+	dur           metrics.Histogram
+	zipkinTracer  *stdzipkin.Tracer
+)
 
 func init() {
 	flag.StringVar(&DefaultConfig.MetricAddr, "metric.addr", ":5070", "Metrics listen address")
 	flag.StringVar(&DefaultConfig.DebugAddr, "debug.addr", ":5060", "Debug listen address")
 	flag.StringVar(&DefaultConfig.HTTPAddr, "http.addr", ":5050", "HTTP listen address")
 	flag.StringVar(&DefaultConfig.GRPCAddr, "grpc.addr", ":5040", "gRPC (HTTP) listen address")
+	flag.StringVar(&DefaultConfig.ZipkinUrl, "zipkin.url", "http://localhost:9411/api/v2/spans", "Zipkin url")
 
 	// Use environment variables, if set. Flags have priority over Env vars.
 	if addr := os.Getenv("DEBUG_ADDR"); addr != "" {
@@ -69,6 +67,7 @@ type Config struct {
 	DebugAddr string
 	MetricAddr string
 	GRPCAddr string
+	ZipkinUrl  string
 }
 
 // Run starts a new http server, gRPC server, and a debug server with the
@@ -98,7 +97,7 @@ func Run(cfg Config) {
             err         error
             hostPort    = "localhost:80"
             serviceName = "follow-service"
-            reporter    = zipkinhttp.NewReporter(zipkinURL)
+			reporter    = zipkinhttp.NewReporter(cfg.ZipkinUrl)
         )
         defer reporter.Close()
         zEP, _ := stdzipkin.NewEndpoint(serviceName, hostPort)
@@ -113,7 +112,7 @@ func Run(cfg Config) {
     fmt.Println("Done Initializing")
     fmt.Println("---------------------------------")
 
-	endpoints := NewEndpoints()
+	endpoints := NewEndpoints(logger, zipkinTracer)
 
 	// Mechanical domain.
 	errc := make(chan error)

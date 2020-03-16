@@ -23,15 +23,26 @@ package handlers
 import (
 	"context"
 
+	// 3d Party
+	"github.com/go-kit/kit/log"
+	stdzipkin "github.com/openzipkin/zipkin-go"
+
+	// This Service
 	pb "{{.PBImportPath -}}"
 )
 
 // NewService returns a naïve, stateless implementation of Service.
-func NewService() pb.{{GoName .Service.Name}}Server {
-	return {{ToLower .Service.Name}}Service{}
+func NewService(logger log.Logger, zipkinTracer *stdzipkin.Tracer) pb.{{GoName .Service.Name}}Server {
+	return {{ToLower .Service.Name}}Service{
+		logger:       logger,
+		zipkinTracer: zipkinTracer,
+	}
 }
 
-type {{ToLower .Service.Name}}Service struct{}
+type {{ToLower .Service.Name}}Service struct{
+	logger       log.Logger
+	zipkinTracer *stdzipkin.Tracer
+}
 
 {{with $te := . }}
 	{{range $i := $te.Service.Methods}}

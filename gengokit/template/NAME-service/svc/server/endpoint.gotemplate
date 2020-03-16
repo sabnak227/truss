@@ -6,17 +6,22 @@
 package server
 
 import (
+
+	// 3d Party
+	"github.com/go-kit/kit/log"
+	stdzipkin "github.com/openzipkin/zipkin-go"
+
 	// This Service
 	pb "{{.PBImportPath -}}"
 	"{{.ImportPath -}} /svc"
 	"{{.ImportPath -}} /handlers"
 )
 
-func NewEndpoints() svc.Endpoints {
+func NewEndpoints(logger log.Logger, zipkinTracer *stdzipkin.Tracer) svc.Endpoints {
 	// Business domain.
 	var service pb.{{.Service.Name}}Server
 	{
-		service = handlers.NewService()
+		service = handlers.NewService(logger, zipkinTracer)
 		// Wrap Service with default middlewares. See svc/middlewares.go
 		service = wrapService(service)
 		// Wrap Service with middlewares. See handlers/middlewares.go
