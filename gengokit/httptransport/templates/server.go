@@ -83,9 +83,11 @@ import (
 
 	"context"
 
+	"github.com/go-kit/kit/tracing/zipkin"
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	httptransport "github.com/go-kit/kit/transport/http"
+	stdzipkin "github.com/openzipkin/zipkin-go"
 
 	// This service
 	pb "{{.PBImportPath -}}"
@@ -106,7 +108,7 @@ var (
 
 // MakeHTTPHandler returns a handler that makes a set of endpoints available
 // on predefined paths.
-func MakeHTTPHandler(endpoints Endpoints, options ...httptransport.ServerOption) http.Handler {
+func MakeHTTPHandler(endpoints Endpoints, zipkinTracer *stdzipkin.Tracer, options ...httptransport.ServerOption) http.Handler {
 	{{- if .HTTPHelper.Methods}}
 		serverOptions := []httptransport.ServerOption{
 			httptransport.ServerBefore(headersToContext),
@@ -114,6 +116,8 @@ func MakeHTTPHandler(endpoints Endpoints, options ...httptransport.ServerOption)
 			httptransport.ServerAfter(httptransport.SetContentType(contentType)),
 		}
 		serverOptions = append(serverOptions, options...)
+
+		serverOptions = append(serverOptions, zipkin.HTTPServerTrace(zipkinTracer))
 	{{- end }}
 	m := mux.NewRouter()
 

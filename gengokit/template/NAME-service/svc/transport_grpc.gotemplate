@@ -14,18 +14,23 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
+	"github.com/go-kit/kit/tracing/zipkin"
 	grpctransport "github.com/go-kit/kit/transport/grpc"
+	stdzipkin "github.com/openzipkin/zipkin-go"
 
 	// This Service
 	pb "{{.PBImportPath -}}"
 )
 
 // MakeGRPCServer makes a set of endpoints available as a gRPC {{.Service.Name}}Server.
-func MakeGRPCServer(endpoints Endpoints, options ...grpctransport.ServerOption) pb.{{.Service.Name}}Server {
+func MakeGRPCServer(endpoints Endpoints, zipkinTracer *stdzipkin.Tracer, options ...grpctransport.ServerOption) pb.{{.Service.Name}}Server {
 	serverOptions := []grpctransport.ServerOption{
 		grpctransport.ServerBefore(metadataToContext),
 	}
 	serverOptions = append(serverOptions, options...)
+
+	serverOptions = append(serverOptions, zipkin.GRPCServerTrace(zipkinTracer))
+
 	return &grpcServer{
 	// {{ ToLower .Service.Name }}
 	{{range $i := .Service.Methods}}

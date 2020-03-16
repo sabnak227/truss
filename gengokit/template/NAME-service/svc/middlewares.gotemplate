@@ -10,46 +10,15 @@ package svc
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/go-kit/kit/endpoint"
-
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/metrics"
-	"github.com/go-kit/kit/metrics/prometheus"
-	stdprometheus "github.com/prometheus/client_golang/prometheus"
+	zipkin "github.com/openzipkin/zipkin-go"
+	"github.com/openzipkin/zipkin-go/model"
+	pb "github.com/sabnak227/follow-service/pb"
 )
-
-var logger log.Logger
-var dur metrics.Histogram
-
-func init() {
-	fmt.Println("---------------------------------")
-	fmt.Println("Initializing")
-	fmt.Println("---------------------------------")
-	{
-		logger = log.NewLogfmtLogger(os.Stderr)
-		logger = log.With(logger, "ts", log.DefaultTimestampUTC)
-		logger = log.With(logger, "caller", log.DefaultCaller)
-	}
-	{
-		dur = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{
-			Namespace: "{{ToLower .Service.Name}}_svc",
-			Subsystem: "api",
-			Name:      "request_duration_seconds",
-			Help:      "Total time spent serving requests.",
-		}, []string{})
-	}
-}
-
-func WrapEndpoints(in Endpoints) Endpoints {
-
-	in.WrapAllLabeledExcept(InstrumentingMiddleware(dur))
-	in.WrapAllLabeledExcept(LoggingMiddleware(logger))
-
-	return in
-}
 
 func InstrumentingMiddleware(duration metrics.Histogram) LabeledMiddleware {
 	return func(name string, in endpoint.Endpoint) endpoint.Endpoint {
@@ -70,5 +39,72 @@ func LoggingMiddleware(logger log.Logger) LabeledMiddleware {
 			}(time.Now())
 			return in(ctx, req)
 		}
+	}
+}
+
+
+// Middleware describes a service (as opposed to endpoint) middleware.
+type FollowServiceMiddleware func(pb.FollowServer) pb.FollowServer
+
+func TracingMiddleware(t *zipkin.Tracer) FollowServiceMiddleware {
+	return func(next pb.FollowServer) pb.FollowServer {
+		return tracingMiddleware{
+			tracer: t,
+			next:   next,
+		}
+	}
+}
+
+// tracingMiddleware implements pb.FollowServer in order to
+// easily trace requests throughout a distributed system.
+type tracingMiddleware struct {
+	tracer *zipkin.Tracer
+	next   pb.FollowServer
+}
+
+
+{{with $te := . }}
+	{{range $i := $te.Service.Methods}}
+		// {{$i.Name}} implements pb.{{$te.Service.Name}}Service in order to
+		// provide distributed tracing visibility.
+		func (tm tracingMiddleware) {{$i.Name}}(ctx context.Context, req *pb.{{GoName $i.RequestType.Name}}) (res *pb.{{GoName $i.ResponseType.Name}}, err error){
+			serverSpan, tracedCtx := spanCreator(ctx, tm.tracer, "{{$i.Name}}")
+			defer serverSpan.Finish()
+			defer spanRecoverer(tracedCtx, serverSpan, "{{$i.Name}}")
+
+			res, err = tm.next.{{$i.Name}}(tracedCtx, req)
+			spanLogger(tracedCtx, serverSpan, "{{$i.Name}}", err)
+			return
+		}
+	{{end}}
+{{- end}}
+
+// spanCreator creates a new trace span throughout the distributed system.
+func spanCreator(ctx context.Context, t *zipkin.Tracer, methodName string) (zipkin.Span, context.Context) {
+	var sc model.SpanContext
+	parentSpan := zipkin.SpanFromContext(ctx);
+	if parentSpan != nil {
+		sc = parentSpan.Context()
+	}
+	sp := t.StartSpan(methodName, zipkin.Parent(sc))
+
+	ctx = zipkin.NewContext(ctx, sp)
+	return sp, ctx
+}
+
+// spanLogger logs some information into the span created
+func spanLogger(ctx context.Context, span zipkin.Span, methodName string, err error) {
+	span.Tag("MethodName", methodName)
+	if err != nil {
+		span.Tag("Error", err.Error())
+	}
+}
+
+// spanRecoverer tells us information when there is a panic occurs
+func spanRecoverer(ctx context.Context, span zipkin.Span, methodName string) {
+	if r := recover(); r != nil {
+		// we've had a panic, record via opentracing
+		span.Tag("MethodName", methodName)
+		span.Tag("Panic", fmt.Sprintf("%v", r))
 	}
 }

@@ -6,25 +6,38 @@
 package server
 
 import (
-        "flag"
-        "os"
-        "fmt"
-	"log"
+    "flag"
+    "os"
+    "fmt"
 	"net"
 	"net/http"
 	"net/http/pprof"
 
 	// 3d Party
 	"google.golang.org/grpc"
+	"github.com/go-kit/kit/log"
+    "github.com/go-kit/kit/metrics"
+    "github.com/go-kit/kit/metrics/prometheus"
+    stdzipkin "github.com/openzipkin/zipkin-go"
+    "github.com/openzipkin/zipkin-go/reporter"
+    zipkinhttp "github.com/openzipkin/zipkin-go/reporter/http"
+    stdprometheus "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
 
 	// This Service
 	pb "{{.PBImportPath -}}"
 	"{{.ImportPath -}} /svc"
 	"{{.ImportPath -}} /handlers"
-	stdprometheus "github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var DefaultConfig Config
+
+var logger log.Logger
+var dur metrics.Histogram
+var zipkinTracer *stdzipkin.Tracer
+var zipkinReporter reporter.Reporter
+var zipkinURL = "http://localhost:9411/api/v2/spans"
+
 
 func init() {
 	flag.StringVar(&DefaultConfig.MetricAddr, "metric.addr", ":5070", "Metrics listen address")
@@ -58,39 +71,48 @@ type Config struct {
 	GRPCAddr string
 }
 
-func NewEndpoints() svc.Endpoints {
-	// Business domain.
-	var service pb.{{.Service.Name}}Server
-	{
-		service = handlers.NewService()
-		// Wrap Service with middlewares. See handlers/middlewares.go
-		service = handlers.WrapService(service)
-	}
-
-	// Endpoint domain.
-	var (
-	{{range $i := .Service.Methods -}}
-		{{ToLower $i.Name}}Endpoint = svc.Make{{$i.Name}}Endpoint(service)
-	{{end}}
-	)
-
-	endpoints := svc.Endpoints{
-	{{range $i := .Service.Methods -}}
-		{{$i.Name}}Endpoint:    {{ToLower $i.Name}}Endpoint,
-	{{end}}
-	}
-
-	// Wrap default middlewares
-	endpoints = svc.WrapEndpoints(endpoints)
-	// Wrap selected Endpoints with middlewares. See handlers/middlewares.go
-	endpoints = handlers.WrapEndpoints(endpoints)
-
-	return endpoints
-}
-
 // Run starts a new http server, gRPC server, and a debug server with the
 // passed config and logger
 func Run(cfg Config) {
+    fmt.Println("---------------------------------")
+    fmt.Println("Initializing")
+    fmt.Println("---------------------------------")
+
+    {
+        logger = log.NewLogfmtLogger(os.Stderr)
+        logger = log.With(logger, "ts", log.DefaultTimestampUTC)
+        logger = log.With(logger, "caller", log.DefaultCaller)
+    }
+
+    {
+        dur = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{
+            Namespace: "follow_svc",
+            Subsystem: "api",
+            Name:      "request_duration_seconds",
+            Help:      "Total time spent serving requests.",
+        }, []string{})
+    }
+
+    {
+        var (
+            err         error
+            hostPort    = "localhost:80"
+            serviceName = "follow-service"
+            reporter    = zipkinhttp.NewReporter(zipkinURL)
+        )
+        defer reporter.Close()
+        zEP, _ := stdzipkin.NewEndpoint(serviceName, hostPort)
+        zipkinTracer, err = stdzipkin.NewTracer(reporter, stdzipkin.WithLocalEndpoint(zEP))
+        if err != nil {
+            logger.Log("err", err)
+            os.Exit(1)
+        }
+    }
+
+    fmt.Println("---------------------------------")
+    fmt.Println("Done Initializing")
+    fmt.Println("---------------------------------")
+
 	endpoints := NewEndpoints()
 
 	// Mechanical domain.
@@ -101,7 +123,7 @@ func Run(cfg Config) {
 
 	// Debug listener.
 	go func() {
-		log.Println("transport", "debug", "addr", cfg.DebugAddr)
+		logger.Log("transport", "debug", "addr", cfg.DebugAddr)
 
 		m := http.NewServeMux()
 		m.Handle("/debug/pprof/", http.HandlerFunc(pprof.Index))
@@ -115,32 +137,32 @@ func Run(cfg Config) {
 
 	// Metric listener.
 	go func() {
-		log.Println("transport", "metric", "addr", cfg.MetricAddr)
+		logger.Log("transport", "metric", "addr", cfg.MetricAddr)
 
 		m := http.NewServeMux()
 		
-		m.Handle("/metrics", stdprometheus.Handler())
+		m.Handle("/metrics", promhttp.Handler())
 
 		errc <- http.ListenAndServe(cfg.MetricAddr, m)
 	}()
 
 	// HTTP transport.
 	go func() {
-		log.Println("transport", "HTTP", "addr", cfg.HTTPAddr)
-		h := svc.MakeHTTPHandler(endpoints)
+		logger.Log("transport", "HTTP", "addr", cfg.HTTPAddr)
+		h := svc.MakeHTTPHandler(endpoints, zipkinTracer)
 		errc <- http.ListenAndServe(cfg.HTTPAddr, h)
 	}()
 
 	// gRPC transport.
 	go func() {
-		log.Println("transport", "gRPC","addr", cfg.GRPCAddr)
+		logger.Log("transport", "gRPC", "addr", cfg.GRPCAddr)
 		ln, err := net.Listen("tcp", cfg.GRPCAddr)
 		if err != nil {
 			errc <- err
 			return
 		}
 
-		srv := svc.MakeGRPCServer(endpoints)
+		srv := svc.MakeGRPCServer(endpoints, zipkinTracer)
 		s := grpc.NewServer()
 		pb.Register{{.Service.Name}}Server(s, srv)
 
@@ -148,6 +170,6 @@ func Run(cfg Config) {
 	}()
 
 	// Run!
-	log.Println("exit", <-errc)
+	logger.Log("exit", <-errc)
 }
 
