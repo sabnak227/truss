@@ -3,51 +3,21 @@
 // Version: {{.Version}}
 // Version Date: {{.VersionDate}}
 
-package svc
+package middlewares
 
 // This file contains middlewares wrapping around endpoints from services,
 
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"github.com/go-kit/kit/endpoint"
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/metrics"
 	zipkin "github.com/openzipkin/zipkin-go"
 	"github.com/openzipkin/zipkin-go/model"
-	pb "github.com/sabnak227/follow-service/pb"
+	pb "{{.PBImportPath -}}"
 )
 
-func InstrumentingMiddleware(duration metrics.Histogram) LabeledMiddleware {
-	return func(name string, in endpoint.Endpoint) endpoint.Endpoint {
-		return func(ctx context.Context, req interface{}) (rsp interface{}, err error) {
-			defer func(begin time.Time) {
-				duration.Observe(time.Since(begin).Seconds())
-			}(time.Now())
-			return in(ctx, req)
-		}
-	}
-}
-
-func LoggingMiddleware(logger log.Logger) LabeledMiddleware {
-	return func(name string, in endpoint.Endpoint) endpoint.Endpoint {
-		return func(ctx context.Context, req interface{}) (rsp interface{}, err error) {
-			defer func(begin time.Time) {
-				logger.Log("endpoint", name, "input", req, "output", rsp, "err", err, "took", time.Since(begin))
-			}(time.Now())
-			return in(ctx, req)
-		}
-	}
-}
-
-
-// Middleware describes a service (as opposed to endpoint) middleware.
-type FollowServiceMiddleware func(pb.FollowServer) pb.FollowServer
-
-func TracingMiddleware(t *zipkin.Tracer) FollowServiceMiddleware {
-	return func(next pb.FollowServer) pb.FollowServer {
+func TracingMiddleware(t *zipkin.Tracer) {{.Service.Name}}ServiceMiddleware {
+	return func(next pb.{{.Service.Name}}Server) pb.{{.Service.Name}}Server {
 		return tracingMiddleware{
 			tracer: t,
 			next:   next,
@@ -55,11 +25,11 @@ func TracingMiddleware(t *zipkin.Tracer) FollowServiceMiddleware {
 	}
 }
 
-// tracingMiddleware implements pb.FollowServer in order to
+// tracingMiddleware implements pb.{{.Service.Name}}Server in order to
 // easily trace requests throughout a distributed system.
 type tracingMiddleware struct {
 	tracer *zipkin.Tracer
-	next   pb.FollowServer
+	next   pb.{{.Service.Name}}Server
 }
 
 

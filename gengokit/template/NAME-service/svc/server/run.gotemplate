@@ -31,9 +31,11 @@ import (
 
 var (
 	DefaultConfig Config
-	logger        log.Logger
-	dur           metrics.Histogram
-	zipkinTracer  *stdzipkin.Tracer
+	logger         log.Logger
+	requestCount   metrics.Counter
+    errCount       metrics.Counter
+    requestLatency metrics.Histogram
+	zipkinTracer   *stdzipkin.Tracer
 )
 
 func init() {
@@ -83,20 +85,40 @@ func Run(cfg Config) {
         logger = log.With(logger, "caller", log.DefaultCaller)
     }
 
+	fieldKeys := []string{"method", "error"}
+
     {
-        dur = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{
-            Namespace: "follow_svc",
+        requestCount = prometheus.NewCounterFrom(stdprometheus.CounterOpts{
+            Namespace: "{{ToLower .Service.Name}}_service",
+            Subsystem: "api",
+            Name:      "request_count",
+            Help:      "Number of requests received.",
+        }, fieldKeys)
+    }
+
+    {
+        errCount = prometheus.NewCounterFrom(stdprometheus.CounterOpts{
+            Namespace: "{{ToLower .Service.Name}}_service",
+            Subsystem: "api",
+            Name:      "error_count",
+            Help:      "Number of error received.",
+        }, fieldKeys)
+    }
+
+    {
+        requestLatency = prometheus.NewSummaryFrom(stdprometheus.SummaryOpts{
+            Namespace: "{{ToLower .Service.Name}}_service",
             Subsystem: "api",
             Name:      "request_duration_seconds",
             Help:      "Total time spent serving requests.",
-        }, []string{})
+        }, fieldKeys)
     }
 
     {
         var (
             err         error
             hostPort    = "localhost:80"
-            serviceName = "follow-service"
+            serviceName = "{{ToLower .Service.Name}}-service"
 			reporter    = zipkinhttp.NewReporter(cfg.ZipkinUrl)
         )
         defer reporter.Close()

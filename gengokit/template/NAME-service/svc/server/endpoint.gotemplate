@@ -15,6 +15,7 @@ import (
 	pb "{{.PBImportPath -}}"
 	"{{.ImportPath -}} /svc"
 	"{{.ImportPath -}} /handlers"
+	"{{.ImportPath -}} /middlewares"
 )
 
 func NewEndpoints(logger log.Logger, zipkinTracer *stdzipkin.Tracer) svc.Endpoints {
@@ -50,14 +51,13 @@ func NewEndpoints(logger log.Logger, zipkinTracer *stdzipkin.Tracer) svc.Endpoin
 }
 
 func wrapEndpoints(in svc.Endpoints) svc.Endpoints {
-
-	in.WrapAllLabeledExcept(svc.InstrumentingMiddleware(dur))
-	in.WrapAllLabeledExcept(svc.LoggingMiddleware(logger))
+	in.WrapAllLabeledExcept(middlewares.LoggingMiddleware(logger))
 
 	return in
 }
 
-func wrapService(in pb.FollowServer) pb.FollowServer {
-	in = svc.TracingMiddleware(zipkinTracer)(in)
+func wrapService(in pb.{{.Service.Name}}Server) pb.{{.Service.Name}}Server {
+	in = middlewares.TracingMiddleware(zipkinTracer)(in)
+	in = middlewares.InstrumentationMiddleware(requestCount, errCount, requestLatency)(in)
 	return in
 }
